@@ -44,11 +44,53 @@ jobs:
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
-            "cmdline-tools;latest" \
             "ndk;23.2.8568313" \
             "cmake;3.10.2.4988404"
 
           yes | sdkmanager --licenses || true
+
+      - name: Install Official Godot Android Templates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
+
+          mkdir -p "$TEMPLATE_DIR"
+
+          TEMP_DIR=$(mktemp -d)
+
+          TEMPLATE_URL="https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz"
+
+          echo "Downloading official Godot templates..."
+
+          curl -fL "$TEMPLATE_URL" \
+            -o "$TEMP_DIR/templates.tpz"
+
+          mkdir -p "$TEMP_DIR/unpacked"
+
+          unzip -q "$TEMP_DIR/templates.tpz" \
+            -d "$TEMP_DIR/unpacked"
+
+          DEBUG_TEMPLATE=$(find "$TEMP_DIR/unpacked" \
+            -type f -name android_debug.apk -print -quit)
+
+          if [ -z "$DEBUG_TEMPLATE" ]; then
+            echo "::error::Android debug template not found in archive"
+            exit 1
+          fi
+
+          SOURCE_DIR=$(dirname "$DEBUG_TEMPLATE")
+
+          cp -a "$SOURCE_DIR/." "$TEMPLATE_DIR/"
+
+          echo "Installed templates:"
+          ls -lh "$TEMPLATE_DIR"
+
+          test -s "$TEMPLATE_DIR/android_debug.apk"
+          test -s "$TEMPLATE_DIR/android_release.apk"
+
+          echo "Both Android templates verified."
 
       - name: Extract Project ZIP
         shell: bash
@@ -66,10 +108,11 @@ jobs:
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          PROJECT_FILE=$(find extracted -type f -name project.godot -print -quit)
+          PROJECT_FILE=$(find extracted \
+            -type f -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "::error::Godot project not found in ZIP"
+            echo "::error::Godot project not found"
             exit 1
           fi
 
@@ -77,7 +120,7 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project directory: $PROJECT_DIR"
+          echo "Project found: $PROJECT_DIR"
 
       - name: Create Android Debug Keystore
         shell: bash
@@ -134,12 +177,18 @@ jobs:
           package/unique_name="com.grandmaster.chess3d"
           package/name="3D Grandmaster Chess"
           package/signed=true
+          keystore/debug="/home/runner/.android/debug.keystore"
+          keystore/debug_user="androiddebugkey"
+          keystore/debug_password="android"
+          keystore/release=""
+          keystore/release_user=""
+          keystore/release_password=""
           screen/immersive_mode=true
           screen/support_small=true
           screen/support_normal=true
           EOF
 
-          echo "Android export preset created."
+          echo "Android preset created."
 
       - name: Configure Godot Android Paths
         shell: bash
@@ -166,7 +215,7 @@ jobs:
             --path "$PROJECT_DIR" \
             --quit
 
-      - name: Verify Android Build Environment
+      - name: Verify Complete Build Configuration
         shell: bash
         run: |
           set -euo pipefail
@@ -174,25 +223,26 @@ jobs:
           echo "Godot version:"
           godot --headless --version
 
-          echo "Java version:"
+          echo "Java:"
           java -version
 
           echo "Android SDK:"
-          sdkmanager --list_installed
-
           test -d "$ANDROID_HOME/platforms/android-34"
-          test -d "$ANDROID_HOME/ndk/23.2.8568313"
-          test -d "$ANDROID_HOME/cmake/3.10.2.4988404"
-          test -f "$HOME/.android/debug.keystore"
 
-          echo "Android environment verified."
+          echo "Android NDK:"
+          test -d "$ANDROID_HOME/ndk/23.2.8568313"
+
+          echo "Godot Android templates:"
+          test -s "$HOME/.local/share/godot/export_templates/4.3.stable/android_debug.apk"
+          test -s "$HOME/.local/share/godot/export_templates/4.3.stable/android_release.apk"
+
+          echo "Debug keystore:"
+          test -s "$HOME/.android/debug.keystore"
+
+          echo "All required files verified."
 
       - name: Export Android APK
         shell: bash
-        env:
-          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /home/runner/.android/debug.keystore
-          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
-          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
           set -euo pipefail
 
@@ -206,11 +256,11 @@ jobs:
             "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk"
 
           if [ ! -s "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk" ]; then
-            echo "::error::APK was not generated"
+            echo "::error::APK generation failed"
             exit 1
           fi
 
-          echo "APK successfully generated."
+          echo "APK generated successfully."
 
       - name: Publish APK to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -219,7 +269,7 @@ jobs:
           name: "3D Grandmaster Chess Build ${{ github.run_number }}"
           body: |
             3D Grandmaster Chess
-            Offline Android Debug APK.
+            Offline Android APK.
           files: release-files/3D-Grandmaster-Chess.apk
           draft: false
           prerelease: true
