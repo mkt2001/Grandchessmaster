@@ -1,0 +1,71 @@
+name: Build APK and Publish GitHub Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3.0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract uploaded project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE="3D-GRANDMASTER-CHESS-PROFESSIONAL-OFFLINE.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Project ZIP not found!"
+            exit 1
+          fi
+
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+          PROJECT_FILE="$(find extracted -type f -name project.godot -print -quit)"
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "Godot project not found inside ZIP!"
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Import Godot project
+        run: |
+          godot --headless --editor --path "$PROJECT_DIR" --quit
+
+      - name: Export Android APK
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/release-files"
+
+          godot --headless --path "$PROJECT_DIR" \
+            --export-debug "Android" \
+            "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk"
+
+          test -s "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk"
+
+      - name: Upload APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "android-build-${{ github.run_number }}"
+          name: "3D Grandmaster Chess Build ${{ github.run_number }}"
+          body: "Automated Android APK build."
+          files: release-files/3D-Grandmaster-Chess.apk
+          prerelease: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
