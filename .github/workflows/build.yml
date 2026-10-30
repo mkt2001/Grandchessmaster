@@ -35,11 +35,8 @@ jobs:
         with:
           packages: ''
 
-      - name: Install Required Android Packages
-        shell: bash
+      - name: Install Android Packages
         run: |
-          set -euo pipefail
-
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-34" \
@@ -54,18 +51,15 @@ jobs:
 
           ZIP_FILE="3D-GRANDMASTER-CHESS-PROFESSIONAL-OFFLINE.zip"
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found!"
-            exit 1
-          fi
+          test -f "$ZIP_FILE"
 
-          mkdir -p extracted
+          mkdir extracted
           unzip -q "$ZIP_FILE" -d extracted
 
           PROJECT_FILE=$(find extracted -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: project.godot not found!"
+            echo "Godot project not found!"
             exit 1
           fi
 
@@ -73,8 +67,46 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Configure Android SDK
+      - name: Fix Android Export Preset
         shell: bash
+        run: |
+          set -euo pipefail
+
+          PRESET="$PROJECT_DIR/export_presets.cfg"
+
+          if [ ! -f "$PRESET" ]; then
+            echo "export_presets.cfg not found!"
+            exit 1
+          fi
+
+          python3 - "$PRESET" <<'PY'
+          import sys
+          import re
+
+          path = sys.argv[1]
+
+          with open(path, "r", encoding="utf-8") as f:
+              data = f.read()
+
+          data = re.sub(
+              r'(?m)^gradle_build/min_sdk=.*\n?',
+              '',
+              data
+          )
+
+          data = re.sub(
+              r'(?m)^gradle_build/target_sdk=.*\n?',
+              '',
+              data
+          )
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(data)
+
+          print("Android SDK preset configuration fixed.")
+          PY
+
+      - name: Configure Android SDK
         run: |
           mkdir -p "$HOME/.config/godot"
 
@@ -105,7 +137,10 @@ jobs:
             --export-debug "Android" \
             "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk"
 
-          test -s release-files/3D-Grandmaster-Chess.apk
+          if [ ! -s release-files/3D-Grandmaster-Chess.apk ]; then
+            echo "APK export failed!"
+            exit 1
+          fi
 
       - name: Publish APK to GitHub Release
         uses: softprops/action-gh-release@v2
