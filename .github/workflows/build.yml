@@ -14,9 +14,11 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+      # 1. Checkout
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 2. Install Godot
       - name: Install Godot 4.3
         uses: chickensoft-games/setup-godot@v2
         with:
@@ -24,19 +26,24 @@ jobs:
           use-dotnet: false
           include-templates: true
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
+      # 3. Java
+      - name: Setup Java
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      # 4. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: ''
 
       - name: Install Android Packages
+        shell: bash
         run: |
+          set -euo pipefail
+
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-34" \
@@ -44,6 +51,7 @@ jobs:
 
           yes | sdkmanager --licenses || true
 
+      # 5. Extract ZIP
       - name: Extract Project ZIP
         shell: bash
         run: |
@@ -51,15 +59,20 @@ jobs:
 
           ZIP_FILE="3D-GRANDMASTER-CHESS-PROFESSIONAL-OFFLINE.zip"
 
-          test -f "$ZIP_FILE"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::Project ZIP not found!"
+            exit 1
+          fi
 
-          mkdir extracted
+          mkdir -p extracted
+
           unzip -q "$ZIP_FILE" -d extracted
 
-          PROJECT_FILE=$(find extracted -name project.godot -print -quit)
+          PROJECT_FILE=$(find extracted \
+            -type f -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "Godot project not found!"
+            echo "::error::Godot project not found inside ZIP!"
             exit 1
           fi
 
@@ -67,47 +80,65 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Fix Android Export Preset
+          echo "Project found: $PROJECT_DIR"
+
+      # 6. Completely recreate Android Export Preset
+      - name: Create Clean Android Export Preset
         shell: bash
         run: |
           set -euo pipefail
 
-          PRESET="$PROJECT_DIR/export_presets.cfg"
+          cat > "$PROJECT_DIR/export_presets.cfg" <<'EOF'
+          [preset.0]
 
-          if [ ! -f "$PRESET" ]; then
-            echo "export_presets.cfg not found!"
-            exit 1
-          fi
+          name="Android"
+          platform="Android"
+          runnable=true
+          advanced_options=false
+          dedicated_server=false
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          export_path=""
+          patches=PackedStringArray()
+          encryption_include_filters=""
+          encryption_exclude_filters=""
+          encrypt_pck=false
+          encrypt_directory=false
 
-          python3 - "$PRESET" <<'PY'
-          import sys
-          import re
+          [preset.0.options]
 
-          path = sys.argv[1]
+          custom_template/debug=""
+          custom_template/release=""
 
-          with open(path, "r", encoding="utf-8") as f:
-              data = f.read()
+          gradle_build/use_gradle_build=false
 
-          data = re.sub(
-              r'(?m)^gradle_build/min_sdk=.*\n?',
-              '',
-              data
-          )
+          architectures/armeabi-v7a=false
+          architectures/arm64-v8a=true
+          architectures/x86=false
+          architectures/x86_64=false
 
-          data = re.sub(
-              r'(?m)^gradle_build/target_sdk=.*\n?',
-              '',
-              data
-          )
+          version/code=1
+          version/name="1.0.0"
 
-          with open(path, "w", encoding="utf-8") as f:
-              f.write(data)
+          package/unique_name="com.grandmaster.chess3d"
+          package/name="3D Grandmaster Chess"
+          package/signed=true
 
-          print("Android SDK preset configuration fixed.")
-          PY
+          screen/immersive_mode=true
+          screen/support_small=true
+          screen/support_normal=true
+          EOF
 
-      - name: Configure Android SDK
+          echo "Fresh Android export preset created."
+
+      # 7. Configure SDK
+      - name: Configure Android Paths
+        shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p "$HOME/.config/godot"
 
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
@@ -118,36 +149,63 @@ jobs:
           export/android/java_sdk_path = "$JAVA_HOME"
           EOF
 
+      # 8. Import project
       - name: Import Godot Project
+        shell: bash
         run: |
+          set -euo pipefail
+
           godot --headless \
             --editor \
             --path "$PROJECT_DIR" \
             --quit
 
+      # 9. Check Android templates
+      - name: Check Export Templates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          godot --headless --version
+
+          echo "Checking Android SDK:"
+          test -d "$ANDROID_HOME/platforms/android-34"
+
+          echo "Checking Java:"
+          java -version
+
+          echo "Android export environment ready."
+
+      # 10. Export APK
       - name: Export Android APK
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p release-files
+          mkdir -p "$GITHUB_WORKSPACE/release-files"
 
           godot --headless \
+            --verbose \
             --path "$PROJECT_DIR" \
             --export-debug "Android" \
             "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk"
 
-          if [ ! -s release-files/3D-Grandmaster-Chess.apk ]; then
-            echo "APK export failed!"
+          if [ ! -s "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk" ]; then
+            echo "::error::APK was not generated!"
             exit 1
           fi
 
+          echo "APK successfully generated."
+
+      # 11. Publish Release
       - name: Publish APK to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "android-build-${{ github.run_number }}"
           name: "3D Grandmaster Chess Build ${{ github.run_number }}"
-          body: "Automated Android APK build."
+          body: |
+            3D Grandmaster Chess
+            Automated Android Debug APK.
           files: release-files/3D-Grandmaster-Chess.apk
           draft: false
           prerelease: true
