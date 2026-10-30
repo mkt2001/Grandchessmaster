@@ -35,7 +35,7 @@ jobs:
         with:
           packages: ''
 
-      - name: Install Android Packages
+      - name: Install Android SDK Components
         shell: bash
         run: |
           set -euo pipefail
@@ -43,7 +43,10 @@ jobs:
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-34" \
-            "build-tools;34.0.0"
+            "build-tools;34.0.0" \
+            "cmdline-tools;latest" \
+            "ndk;23.2.8568313" \
+            "cmake;3.10.2.4988404"
 
           yes | sdkmanager --licenses || true
 
@@ -66,7 +69,7 @@ jobs:
           PROJECT_FILE=$(find extracted -type f -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "::error::Godot project not found"
+            echo "::error::Godot project not found in ZIP"
             exit 1
           fi
 
@@ -74,7 +77,7 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project: $PROJECT_DIR"
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Create Android Debug Keystore
         shell: bash
@@ -110,14 +113,13 @@ jobs:
           export_filter="all_resources"
           include_filter=""
           exclude_filter=""
-          export_path="build/3D-Grandmaster-Chess.apk"
+          export_path=""
           patches=PackedStringArray()
           encryption_include_filters=""
           encryption_exclude_filters=""
           seed=0
           encrypt_pck=false
           encrypt_directory=false
-          script_export_mode=2
 
           [preset.0.options]
           custom_template/debug=""
@@ -132,18 +134,12 @@ jobs:
           package/unique_name="com.grandmaster.chess3d"
           package/name="3D Grandmaster Chess"
           package/signed=true
-          keystore/debug="/home/runner/.android/debug.keystore"
-          keystore/debug_user="androiddebugkey"
-          keystore/debug_password="android"
-          keystore/release=""
-          keystore/release_user=""
-          keystore/release_password=""
           screen/immersive_mode=true
           screen/support_small=true
           screen/support_normal=true
           EOF
 
-          echo "Android preset created."
+          echo "Android export preset created."
 
       - name: Configure Godot Android Paths
         shell: bash
@@ -170,23 +166,33 @@ jobs:
             --path "$PROJECT_DIR" \
             --quit
 
-      - name: Verify Android Environment
+      - name: Verify Android Build Environment
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "Godot version:"
           godot --headless --version
 
+          echo "Java version:"
           java -version
 
-          test -d "$ANDROID_HOME/platforms/android-34"
+          echo "Android SDK:"
+          sdkmanager --list_installed
 
+          test -d "$ANDROID_HOME/platforms/android-34"
+          test -d "$ANDROID_HOME/ndk/23.2.8568313"
+          test -d "$ANDROID_HOME/cmake/3.10.2.4988404"
           test -f "$HOME/.android/debug.keystore"
 
-          echo "Android SDK and signing configuration verified."
+          echo "Android environment verified."
 
       - name: Export Android APK
         shell: bash
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /home/runner/.android/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
           set -euo pipefail
 
@@ -200,7 +206,7 @@ jobs:
             "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk"
 
           if [ ! -s "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk" ]; then
-            echo "::error::APK generation failed"
+            echo "::error::APK was not generated"
             exit 1
           fi
 
