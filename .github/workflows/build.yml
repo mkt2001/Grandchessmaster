@@ -14,11 +14,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # 1. Checkout
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Install Godot
       - name: Install Godot 4.3
         uses: chickensoft-games/setup-godot@v2
         with:
@@ -26,14 +24,12 @@ jobs:
           use-dotnet: false
           include-templates: true
 
-      # 3. Java
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      # 4. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -51,7 +47,6 @@ jobs:
 
           yes | sdkmanager --licenses || true
 
-      # 5. Extract ZIP
       - name: Extract Project ZIP
         shell: bash
         run: |
@@ -60,7 +55,7 @@ jobs:
           ZIP_FILE="3D-GRANDMASTER-CHESS-PROFESSIONAL-OFFLINE.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "::error::Project ZIP not found!"
+            echo "::error::Project ZIP not found"
             exit 1
           fi
 
@@ -68,11 +63,10 @@ jobs:
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          PROJECT_FILE=$(find extracted \
-            -type f -name project.godot -print -quit)
+          PROJECT_FILE=$(find extracted -type f -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "::error::Godot project not found inside ZIP!"
+            echo "::error::Godot project not found"
             exit 1
           fi
 
@@ -80,17 +74,33 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project found: $PROJECT_DIR"
+          echo "Project: $PROJECT_DIR"
 
-      # 6. Completely recreate Android Export Preset
-      - name: Create Clean Android Export Preset
+      - name: Create Android Debug Keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$HOME/.android"
+
+          keytool -genkeypair \
+            -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Create Android Export Preset
         shell: bash
         run: |
           set -euo pipefail
 
           cat > "$PROJECT_DIR/export_presets.cfg" <<'EOF'
           [preset.0]
-
           name="Android"
           platform="Android"
           runnable=true
@@ -100,41 +110,42 @@ jobs:
           export_filter="all_resources"
           include_filter=""
           exclude_filter=""
-          export_path=""
+          export_path="build/3D-Grandmaster-Chess.apk"
           patches=PackedStringArray()
           encryption_include_filters=""
           encryption_exclude_filters=""
+          seed=0
           encrypt_pck=false
           encrypt_directory=false
+          script_export_mode=2
 
           [preset.0.options]
-
           custom_template/debug=""
           custom_template/release=""
-
           gradle_build/use_gradle_build=false
-
           architectures/armeabi-v7a=false
           architectures/arm64-v8a=true
           architectures/x86=false
           architectures/x86_64=false
-
           version/code=1
           version/name="1.0.0"
-
           package/unique_name="com.grandmaster.chess3d"
           package/name="3D Grandmaster Chess"
           package/signed=true
-
+          keystore/debug="/home/runner/.android/debug.keystore"
+          keystore/debug_user="androiddebugkey"
+          keystore/debug_password="android"
+          keystore/release=""
+          keystore/release_user=""
+          keystore/release_password=""
           screen/immersive_mode=true
           screen/support_small=true
           screen/support_normal=true
           EOF
 
-          echo "Fresh Android export preset created."
+          echo "Android preset created."
 
-      # 7. Configure SDK
-      - name: Configure Android Paths
+      - name: Configure Godot Android Paths
         shell: bash
         run: |
           set -euo pipefail
@@ -149,7 +160,6 @@ jobs:
           export/android/java_sdk_path = "$JAVA_HOME"
           EOF
 
-      # 8. Import project
       - name: Import Godot Project
         shell: bash
         run: |
@@ -160,23 +170,21 @@ jobs:
             --path "$PROJECT_DIR" \
             --quit
 
-      # 9. Check Android templates
-      - name: Check Export Templates
+      - name: Verify Android Environment
         shell: bash
         run: |
           set -euo pipefail
 
           godot --headless --version
 
-          echo "Checking Android SDK:"
-          test -d "$ANDROID_HOME/platforms/android-34"
-
-          echo "Checking Java:"
           java -version
 
-          echo "Android export environment ready."
+          test -d "$ANDROID_HOME/platforms/android-34"
 
-      # 10. Export APK
+          test -f "$HOME/.android/debug.keystore"
+
+          echo "Android SDK and signing configuration verified."
+
       - name: Export Android APK
         shell: bash
         run: |
@@ -187,17 +195,17 @@ jobs:
           godot --headless \
             --verbose \
             --path "$PROJECT_DIR" \
-            --export-debug "Android" \
+            --export-debug \
+            "Android" \
             "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk"
 
           if [ ! -s "$GITHUB_WORKSPACE/release-files/3D-Grandmaster-Chess.apk" ]; then
-            echo "::error::APK was not generated!"
+            echo "::error::APK generation failed"
             exit 1
           fi
 
           echo "APK successfully generated."
 
-      # 11. Publish Release
       - name: Publish APK to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -205,7 +213,7 @@ jobs:
           name: "3D Grandmaster Chess Build ${{ github.run_number }}"
           body: |
             3D Grandmaster Chess
-            Automated Android Debug APK.
+            Offline Android Debug APK.
           files: release-files/3D-Grandmaster-Chess.apk
           draft: false
           prerelease: true
